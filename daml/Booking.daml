@@ -1,0 +1,118 @@
+module Booking where
+import Daml.Script
+import DA.Date
+
+
+template House
+  with
+    owner: Party
+    price: Decimal
+    description: Text
+    location: Text
+    persons: Int
+  where
+    signatory owner
+
+
+template Reservation
+  with
+    house: House
+    guest: Party
+    startDate: Date
+    endDate: Date
+    daysNumber: Decimal
+  where 
+    signatory guest, house.owner
+
+    nonconsuming choice CreateReview : ContractId Review
+      with
+        text: Text
+        grade: Int
+      controller guest 
+      do create Review with 
+          reviwedReservation = this
+          text = text
+          grade = grade
+          guest = guest
+        
+template ReservationProposal
+  with
+    reservation: Reservation
+  where
+    signatory reservation.guest
+    observer reservation.house.owner
+
+    choice ReservationProposal_Accept
+        : ContractId Reservation
+        controller reservation.house.owner
+        do
+          create Invoice with 
+            reservation = reservation
+            paymentDue = reservation.startDate
+            price = reservation.house.price * reservation.daysNumber 
+          create reservation
+          
+template Invoice
+  with 
+    reservation: Reservation
+    price: Decimal
+    paymentDue: Date
+  where
+      signatory reservation.house.owner
+      observer reservation.guest
+
+
+template Review
+  with 
+    guest: Party
+    reviwedReservation: Reservation
+    text: Text
+    grade: Int
+  where
+    signatory guest
+    observer reviwedReservation.house.owner
+
+    ensure 
+      grade <= 5 &&
+      grade > 0 &&
+      guest == reviwedReservation.guest
+      
+
+-- TESTS
+test = do
+  joey <- allocateParty "Joey"
+  ross <- allocateParty "Ross"
+
+  let
+    house = House with
+      owner = joey
+      price = 200.0
+      persons = 2
+      description = "Great apartment nest to the see."
+      location = "Thasos, Greece"
+
+  houseCid <- submit joey do
+    createCmd house
+
+  let
+    reservation = Reservation with
+      house = house
+      guest = ross
+      startDate = date 2021 Jan 01
+      endDate = date 2021 Jan 03
+      daysNumber = 3.0
+
+  proposalCid <- submit ross do
+    createCmd ReservationProposal
+      with
+        reservation = reservation
+
+  reservationCid <- submit joey do
+    exerciseCmd proposalCid ReservationProposal_Accept
+
+  submit ross do 
+    exerciseCmd reservationCid CreateReview with
+        text = "Everithing was great"
+        grade = 5 
+
+  pure()
